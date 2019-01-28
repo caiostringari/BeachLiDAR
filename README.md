@@ -5,6 +5,8 @@ This repository gathers some tools to process 2D SICK LiDAR data. Please visit h
 
 In this repository, we focus only on processing beach data. You will get something that looks like this:
 
+[![Watch the video]()](https://youtu.be/vdiU4OSL_Ko)
+
 
 
 # Install
@@ -70,7 +72,7 @@ Data variables:
     angles    (time, points) float64 ...
 ```
 
-# Re-sample
+# Re-sampling your data
 
 You may wish to reduce your file sizes. Re-sampling is a good way to do this.
 
@@ -106,6 +108,30 @@ The options are:
 
 
 # Extracting a time-space file (timestack)
+
+Now we have everything we need to extract a timestack. Simply call:
+
+```bash
+python lidar_timestack.py -i ScanData.nc -o Timestack.nc -p Profile.csv --start YYYYMMDD-HH:MM:SS --end YYYYMMDD-HH:MM:SS
+```
+
+The options are:
+
+* [Mandatory] **--input/-i** Input file name. Needs to be NetCDF (see Lidar2nc.py)
+* [Mandatory] **--output/-i** *Output file name. This will be in CSV format.*
+* [Mandatory] **--profile/-p** *Profile file name (see get_profile_from_lidar.py).*
+* [Mandatory] **--start/-t1** *Start time in YYYYMMDD-HH:MM:SS format.*
+* [Mandatory] **--end/-t2** *End time in YYYYMMDD-HH:MM:SS format.*
+* [Mandatory] **--dt/-dt** *Duration of record to used in minutes*
+* [Optional] **--lidar-coords/-coords/-xy** *Surveyed coordinates*
+* [Optional] **--xlim/-xlim** *Analysis limits in the x-direction*
+* [Optional] **--ylim/-ylim** *Analysis limits in the x-direction*
+* [Optional] **--cut/-cut** *Forced analysis limits in the x-direction*
+* [Optional] **--order/-order** *Order of the polynomial for interpolations*
+* [Optional] **--theta/-theta** *Rotation angle in degrees*
+* [Optional] **--dx/-dx** *Resolution in the x-coordinate*
+
+
 
 # Disclaimer:
 
