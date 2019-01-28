@@ -24,7 +24,6 @@ import datetime
 import pytz
 from pytz import timezone
 from matplotlib.dates import date2num
-from pywavelearn.utils import ellapsedseconds
 
 import xarray as xr
 import pandas as pd
@@ -186,6 +185,28 @@ def point_in_hull(point, hull, tolerance=1e-12):
     return all(
         (np.dot(eq[:-1], point) + eq[-1] <= tolerance)
         for eq in hull.equations)
+
+
+def ellapsedseconds(times):
+    """
+    Count how many (fractions) of seconds have passed from the begining.
+
+    Round to 3 decimal places no matter what.
+
+    ----------
+    Args:
+        time [Mandatory (pandas.to_datetime(array)]: array of timestamps
+
+    ----------
+    Return:
+        seconds [Mandatory (np.ndarray)]: array of ellapsed seconds.
+    """
+    seconds = []
+    for t in range(len(times)):
+        dt = (times[t]-times[0]).total_seconds()
+        seconds.append(round(dt, 3))
+
+    return np.array(seconds)
 
 
 def main():

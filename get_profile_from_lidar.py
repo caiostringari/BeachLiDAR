@@ -12,8 +12,8 @@
 #
 # ------------------------------------------------------------------------
 # ------------------------------------------------------------------------
-import matplotlib
-matplotlib.use('Agg')
+# import matplotlib
+# matplotlib.use('Agg')
 
 # System
 import os
@@ -46,9 +46,6 @@ from sklearn.linear_model import (RANSACRegressor,
                                   TheilSenRegressor)
 # from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import PolynomialFeatures
-
-# Personal tools
-from pywavelearn.utils import ellapsedseconds
 
 # Progress bar
 from tqdm import tqdm
@@ -85,6 +82,7 @@ def rotation_transform(theta):
 
 
 def main():
+    """ Call the main program."""
 
     # open file
     ds = xr.open_dataset(args.input[0])
@@ -174,7 +172,7 @@ def main():
     xm = xm[np.logical_not(np.isnan(ym))]
     ym = ym[np.logical_not(np.isnan(ym))]
     # ym = ym[!=nans]
-    # xm = 
+    # xm =
     # print(ym)
 
     # remove nans
