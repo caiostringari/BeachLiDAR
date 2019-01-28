@@ -5,9 +5,7 @@ This repository gathers some tools to process 2D SICK LiDAR data. Please visit h
 
 In this repository, we focus only on processing beach data. You will get something that looks like this:
 
-[![Watch the video]()](https://youtu.be/vdiU4OSL_Ko)
-
-
+![lidar](extra/lidar.gif)
 
 # Install
 
@@ -131,6 +129,9 @@ The options are:
 * [Optional] **--theta/-theta** *Rotation angle in degrees*
 * [Optional] **--dx/-dx** *Resolution in the x-coordinate*
 
+If everything goes right, you can plot your timestack:
+
+![stack](extra/timestack.png)
 
 
 # Disclaimer:
