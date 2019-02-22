@@ -9,6 +9,8 @@
 #
 # v1.1     : 28/06/2018 [Caio Stringari]
 # v1.2     : 19/10/2018 [Caio Stringari]
+# v2.0     : 14/02/2019 [Caio Stringari] -- Fix outlier detection and
+#                                           beach profile definitions.
 #
 # ------------------------------------------------------------------------
 # ------------------------------------------------------------------------
@@ -36,6 +38,9 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.stats import binned_statistic
 
+from scipy.spatial import KDTree
+from scipy.stats import binned_statistic
+
 # Outliers
 from scipy.spatial import ConvexHull
 from sklearn.pipeline import Pipeline
@@ -43,8 +48,92 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.linear_model import RANSACRegressor
 from sklearn.preprocessing import PolynomialFeatures
 
+# Plotting
+# import seaborn as sns
+# import matplotlib as mpl
+# import matplotlib.pyplot as plt
+# sns.set_context("paper", font_scale=2.0, rc={"lines.linewidth": 2.0})
+# sns.set_style("ticks", {'axes.linewidth': 2,
+#                         'legend.frameon': True,
+#                         'axes.facecolor': "#E9E9F1",
+#                         'grid.color': "w"})
+# mpl.rcParams['axes.linewidth'] = 2
+
 # np.where warnings
 warnings.filterwarnings("ignore")
+
+
+def profile(ds, xprof, yprof, R, lidar_height, dx=0.01, plot=False):
+    """
+    Aproximate a beach profile based on measured RTK and LiDAR data.
+
+    ---------
+    Args:
+        ds [Mandatory (xarray.Dataset)] : LiDAR dataset.
+
+        xprof, yprof [Mandatory (np.array)]: Measuered profile coordinates
+
+        R [Mandatory (array)]: Rotation transform
+
+        lidar_height [Mandatory (float)]: Measured LiDAR height.
+
+        dx [Optinal (float)]: Interpolation grid resolution.
+
+    ---------
+    Return:
+        xprof, yprof [Mandatory (np.array)]: Processed profile coordinates
+    """
+
+    # height diferences
+    hprof = yprof[int(np.ceil(len(yprof)/2))]
+    height_diff = np.abs(lidar_height-hprof)
+
+    # apply the rotation transform
+    x = ds.isel(time=0)["x"].values.flatten()
+    y = ds.isel(time=0)["y"].values.flatten()
+
+    # print(x.shape, y.shape)
+    XYr = np.dot(R, np.vstack([x, y]))
+
+    # extract coords
+    x = XYr[0, :]
+    y = XYr[1, :]+lidar_height
+
+    df = pd.DataFrame(np.vstack([x, y]).T, columns=["x", "y"])
+    df = df.dropna()
+
+    # aproximate prifile from lidar data
+    model = Pipeline([('poly',
+                       PolynomialFeatures(degree=1)),
+                      ('ols',
+                       RANSACRegressor())])
+    model.fit(df["x"].values.reshape(-1, 1), df["y"].values)
+    xpred = np.arange(df["x"].min(), df["x"].max(), dx)
+    ypred = np.squeeze(model.predict(xpred.reshape(-1, 1)))
+
+    # aproximate diferences in profile
+    h1 = yprof[np.argmin(np.abs(xprof))]
+    h2 = ypred[np.argmin(np.abs(xpred))]
+    hd = h1-h2
+
+    # fix
+    yprof = yprof-hd
+
+    # interpolate
+    xnew = np.arange(xprof.min(), xprof.max(), dx)
+    f = interp1d(xprof, yprof, kind="linear")
+    ynew = f(xnew)
+
+    #
+
+    if plot:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.scatter(x, y, marker="+", color="k")
+        ax.plot(xnew, ynew, color="r")
+        ax.scatter(xpred, ypred)
+        plt.show()
+
+    return xnew, ynew-lidar_height
 
 
 def rotation_transform(theta):
@@ -67,7 +156,7 @@ def rotation_transform(theta):
 
 
 def get_inliers(x, y, xprof, return_boundary=False,
-                algorithm="convex_hull"):
+                algorithm="convex_hull", interpolation="NN"):
     """
     Search for out and inliers.
 
@@ -107,7 +196,7 @@ def get_inliers(x, y, xprof, return_boundary=False,
     ypred = model.predict(xpred.reshape(-1, 1))
 
     # detect using a convex hull approach
-    if algorithm == "convex_hull":
+    if algorithm == "R+H":
         xcv = np.hstack([XLIMS[0]*xpred, XLIMS[1]*xpred])
         ycv = np.hstack([YLIMS[0]*ypred, YLIMS[1]*ypred])
         points = np.vstack([xcv, ycv]).T
@@ -121,44 +210,30 @@ def get_inliers(x, y, xprof, return_boundary=False,
                 xf.append(_x)
                 yf.append(_y)
 
-        # bin the data
-        ybin, bin_edges, _ = binned_statistic(xf, yf, bins=bins)
-        bin_width = (bin_edges[1] - bin_edges[0])
-        bin_centers = bin_edges[1:] - bin_width/2
-        xf = bin_centers
-        yf = ybin
+        if interpolation == "NN":
+            # nearest neighbour look up
+            Tree = KDTree(np.vstack([xf, np.ones(len(xf))]).T)
+            _, idx = Tree.query(np.vstack([bins, np.ones(len(bins))]).T, k=1)
+            yf = np.array(yf)[idx]
+            xf = bins
+            # interploate
+            f = interp1d(xf, yf, fill_value="extrapolate", kind="linear")
+            yf = f(xprof)
+            xf = xprof
 
-    # detect using the upper boundary line
-    elif algorithm == "upper_boundary":
-
-        # bin the data
-        ybin, bin_edges, _ = binned_statistic(x, y, bins=bins)
-        bin_width = (bin_edges[1] - bin_edges[0])
-        bin_centers = bin_edges[1:] - bin_width/2
-
-        # you gotta love linear algera! lol
-
-        # get slope and intersect
-        dx = np.diff(xpred).mean()
-        dy = np.diff(ypred*YLIMS[0]).mean()
-        coef = dy/dx
-        intercept = (ypred*YLIMS[0])[int(len(xpred)/2)]
-        line = (coef*xprof)+intercept
-
-        # use the slope to find if the point is above or below
-        # the line
-        i = 0
-        idxs = []
-        for x, y in zip(bin_centers, ybin):
-            yp = (coef*x)+intercept
-            delta_y = y-yp
-            if delta_y > 0:
-                idxs.append(i)
-            i += 1
-        xf = bin_centers
-        yf = ybin
-        yf[idxs] = np.nan
-
+        elif interpolation == "BS":
+            # bin the data
+            ybin, bin_edges, _ = binned_statistic(xf, yf, bins=bins)
+            bin_width = (bin_edges[1] - bin_edges[0])
+            bin_centers = bin_edges[1:] - bin_width/2
+            xf = bin_centers
+            yf = ybin
+            # interploate
+            f = interp1d(xf, yf, fill_value="extrapolate", kind="linear")
+            yf = f(xprof)
+            xf = xprof
+        else:
+            raise ValueError("Interpolation method unknown")
     else:
         raise NotImplementedError()
 
@@ -191,7 +266,7 @@ def ellapsedseconds(times):
     """
     Count how many (fractions) of seconds have passed from the begining.
 
-    Round to 3 decimal places no matter what.
+    Round to 6 decimal places no matter what.
 
     ----------
     Args:
@@ -201,10 +276,11 @@ def ellapsedseconds(times):
     Return:
         seconds [Mandatory (np.ndarray)]: array of ellapsed seconds.
     """
+    times = pd.to_datetime(times).to_pydatetime()
     seconds = []
     for t in range(len(times)):
         dt = (times[t]-times[0]).total_seconds()
-        seconds.append(round(dt, 3))
+        seconds.append(round(dt, 6))
 
     return np.array(seconds)
 
@@ -213,13 +289,9 @@ def main():
     """Call the main processing algorithm."""
 
     # read the profile
-    profile = pd.read_csv(args.profile[0])
-    xprof = profile["x"].values
-    yprof = profile["y"].values
-
-    # define the bins
-    dx = np.diff(xprof).mean()
-    bins = np.arange(xprof[0], xprof[-1]+dx, dx)
+    df = pd.read_csv(args.profile[0])
+    xprof = df["x"].values
+    yprof = df["y"].values
 
     # open file
     ds = xr.open_dataset(args.input[0])
@@ -227,15 +299,15 @@ def main():
     # get times
     times = pd.to_datetime(ds["time"].values).to_pydatetime()
     fmt = "%Y%m%d-%H:%M:%S"
-    end = datetime.datetime.strptime(args.end[0], fmt)
     start = datetime.datetime.strptime(args.start[0], fmt)
+    end = start+datetime.timedelta(minutes=DT)
 
-    for t, time in enumerate(times):
-        time = UTC.localize(time)
-        if time == EST.localize(start):
-            i1 = t
-        if time == EST.localize(end):
-            i2 = t
+    # get the lidar height
+    lidar_height = np.nanmean(
+        ds["y"].values[:, int(np.ceil(len(ds["points"].values)/2))])
+
+    i1 = np.argmin(np.abs(date2num(times) - date2num(EST.localize(start))))
+    i2 = np.argmin(np.abs(date2num(times) - date2num(EST.localize(end))))
     ds = ds.isel(time=slice(i1, i2))
     times = pd.to_datetime(ds["time"].values).to_pydatetime()
 
@@ -245,13 +317,31 @@ def main():
     # sample frequency
     sf = int(1/(times[1]-times[0]).total_seconds())
 
+    # plot profile()
+    plot = False
+    if args.debug_profile:
+        plot = True
+    xprof, yprof = profile(ds, xprof, yprof, R, lidar_height, dx=DX,
+                           plot=plot)
+    if plot:
+        sys.exit()
+
+    # cut to XCUT
+    idx1 = np.argmin(np.abs(xprof-XCUT[0]))
+    idx2 = np.argmin(np.abs(xprof-XCUT[1]))
+    xprof = xprof[idx1:idx2]
+    yprof = yprof[idx1:idx2]
+    bins = np.arange(xprof.min(), xprof.max()+DX, DX)
+
     # timeloop
     t = 0
     Z = []
+    H = []
     autimes = []
     for time in times:
 
-        print("  --- Processing {} {}".format(t+1, len(times)), end="\r")
+        print("  --- Processing step {} of {}".format(t+1, len(times)),
+              end="\r")
 
         # localize time
         now = UTC.localize(time)
@@ -280,44 +370,49 @@ def main():
             xcurr, ycurr, xbnd, ybnd = get_inliers(XYcurr[:, 0],
                                                    XYcurr[:, 1], xprof,
                                                    return_boundary=True,
-                                                   algorithm=OD)
+                                                   algorithm=outliers,
+                                                   interpolation=interp)
             # final coordinates
-            xf_ = xcurr
-            yf_ = ycurr
-
-            # interpolate to same as xprof
-            f = interp1d(xf_, yf_, fill_value="extrapolate", kind="linear")
-            yf = f(xprof)
-            xf = xprof
-
+            xf = xcurr
+            yf = ycurr
         except Exception:
             xf = xprof
             yf = yprof
 
-        # print(xprof)
+        # append raw heights
+        H.append(yf)
+
+        # bore heights
         idx = np.where(yf < yprof)[0]
         yf[idx] = yprof[idx]
 
         # calculate the difference between the profile and the
         # current water level
         z = np.abs(yprof-yf)
-
-        # append
         Z.append(z)
+
+        # # make sure plot
+        # fig, ax = plt.subplots(figsize=(12, 6))
+        # ax.plot(xprof, yprof, lw=2, color="r")
+        # ax.scatter(xf, yf, color="k", marker="+")
+        # plt.show()
+        # sys.exit()
 
         t += 1
 
-    # reshape and plot
+    # reshape a
     Z = np.array(Z)
     Z[np.isnan(Z)] = 0
-    secs = ellapsedseconds(pd.to_datetime(times).to_pydatetime())
+    # secs = ellapsedseconds(pd.to_datetime(times).to_pydatetime())
 
     # build the netcdf file
     ds = xr.Dataset()
     # write surface elevation
     ds['eta'] = (('time', 'points'),  Z)  # surface elevation
+    ds['height'] = (('time', 'points'),  H)  # measured heights
     # write distance
     ds['distance'] = (('points'),  xf)  # surface elevation
+    ds["profile"] = (('points'),  yf)   # beach profile
     # write coordinates
     ds.coords['time'] = pd.to_datetime(times)
     ds.coords["points"] = np.arange(0, len(xf), 1)
@@ -354,6 +449,23 @@ if __name__ == '__main__':
                         default=[0, 0],
                         help="LiDAR surveyed coordinates. Default is 0, 0",
                         required=False)
+    parser.add_argument('--outlier-detection', '-outliers',
+                        nargs=2,
+                        action='store',
+                        dest='outliers',
+                        default=["R+H"],
+                        help="Outlier detection method."
+                             "Defualt is RANSAC + Convex Hull",
+                        required=False)
+    parser.add_argument('--interpolation', '-interp',
+                        nargs=1,
+                        action='store',
+                        dest='interp',
+                        default=["NN"],
+                        help="Interpolation method."
+                             "Either Nearest neighbour (NN) or"
+                             "Binned Stats (BS). Default is NN.",
+                        required=False)
     parser.add_argument('--xlim', '-xlim',
                         nargs=2,
                         action='store',
@@ -375,13 +487,13 @@ if __name__ == '__main__':
                         default=[-20, 20],
                         help="Analysis limits in the x-direction.",
                         required=False)
-    parser.add_argument('--ycut', '-ycut',
-                        nargs=2,
-                        action='store',
-                        dest='ycut',
-                        default=[-1, 2],
-                        help="Analysis limits in the y-direction.",
-                        required=False)
+    # parser.add_argument('--ycut', '-ycut',
+    #                     nargs=2,
+    #                     action='store',
+    #                     dest='ycut',
+    #                     default=[-1, 2],
+    #                     help="Analysis limits in the y-direction.",
+    #                     required=False)
     parser.add_argument('--theta', '-theta',
                         nargs=1,
                         action='store',
@@ -395,18 +507,30 @@ if __name__ == '__main__':
                         dest='start',
                         help="Start time. Format is YYYYMMDD-HH:MM:SS.",
                         required=True)
-    parser.add_argument('--end', '-t2',
+    parser.add_argument('-dt', '--time-delta',
                         nargs=1,
                         action='store',
-                        dest='end',
-                        help="End time. Format is YYYYMMDD-HH:MM:SS.",
-                        required=True)
+                        dest='dt',
+                        help="Analysis duration in minutes. Default is 10m.",
+                        default=[10],
+                        required=False)
+    parser.add_argument('-dx', '--horizontal-resolution',
+                        nargs=1,
+                        action='store',
+                        dest='dx',
+                        help="Horizontal resolution. Default is 1cm.",
+                        required=False,
+                        default=[0.01],)
     parser.add_argument('--output', '-o',
                         nargs=1,
                         action='store',
                         dest='output',
                         help="Output file name (.nc).",
                         required=True)
+    parser.add_argument('--debug-profile',
+                        action='store_true',
+                        dest='debug_profile',
+                        help="If parsed, will plot the profile.")
 
     args = parser.parse_args()
 
@@ -415,12 +539,22 @@ if __name__ == '__main__':
     EST = timezone('Australia/Sydney')
     UTC = timezone("UTC")
 
+    # sort out some options here
     XLIMS = [float(args.xlim[0]), float(args.xlim[1])]
     YLIMS = [float(args.ylim[0]), float(args.ylim[1])]
     XCUT = [float(args.xcut[0]), float(args.xcut[1])]
-    YCUT = [float(args.ycut[0]), float(args.ycut[1])]
+    # YCUT = [float(args.ycut[0]), float(args.ycut[1])]
     THETA = float(args.theta[0])
-    OD = "convex_hull"  # other algorithms not working properly yet
+    DT = float(args.dt[0])
+    DX = float(args.dx[0])
+
+    outliers = "R+H"
+    if args.outliers[0] != "R+H":
+        print("Setting outlier detection to RANSAC + Convex Hull."
+              "Other algorithms do not work yet, sorry!")
+
+    # interpolation method
+    interp = args.interp[0]
 
     # the main calll
     main()

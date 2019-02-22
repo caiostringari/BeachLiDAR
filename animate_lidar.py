@@ -34,8 +34,10 @@ import argparse
 # Numpy and scipy
 import numpy as np
 from scipy import interpolate
-from scipy.stats import binned_statistic
+from scipy.interpolate import interp1d
 
+from scipy.spatial import KDTree
+from scipy.stats import binned_statistic
 
 # Outliers
 from scipy.spatial import ConvexHull
@@ -87,7 +89,7 @@ def rotation_transform(theta):
 
 
 def get_inliers(x, y, xprof, return_boundary=False,
-                algorithm="convex_hull"):
+                algorithm="convex_hull", interpolation="NN"):
     """
     Search for out and inliers.
 
@@ -136,17 +138,26 @@ def get_inliers(x, y, xprof, return_boundary=False,
         xf = []
         yf = []
         for _x, _y in zip(x, y):
-            inside = point_in_hull((_x, _y), hull)
+            inside = point_in_hull((_x, _y), hull, tolerance=1e-6)
             if inside:
                 xf.append(_x)
                 yf.append(_y)
 
-        # bin the data
-        ybin, bin_edges, _ = binned_statistic(xf, yf, bins=bins)
-        bin_width = (bin_edges[1] - bin_edges[0])
-        bin_centers = bin_edges[1:] - bin_width/2
-        xf = bin_centers
-        yf = ybin
+        if interpolation == "NN":
+            # nearest neighbour look up
+            Tree = KDTree(np.vstack([xf, np.ones(len(xf))]).T)
+            _, idx = Tree.query(np.vstack([bins, np.ones(len(bins))]).T, k=1)
+            yf = np.array(yf)[idx]
+            xf = bins
+        elif interpolation == "BS":
+            # bin the data
+            ybin, bin_edges, _ = binned_statistic(xf, yf, bins=bins)
+            bin_width = (bin_edges[1] - bin_edges[0])
+            bin_centers = bin_edges[1:] - bin_width/2
+            xf = bin_centers
+            yf = ybin
+        else:
+            raise ValueError("Interpolation method unknown")
 
     # detect using the upper boundary line
     elif algorithm == "upper_boundary":
@@ -282,15 +293,25 @@ def main():
             XYcurr = np.dot(R, np.vstack([xcurr[currsorts],
                                           ycurr[currsorts]])).T  # current
 
-            # apply the decision boundaries
-            xcurr, ycurr, xbnd, ybnd = get_inliers(XYcurr[:, 0],
-                                                   XYcurr[:, 1], xprof,
-                                                   return_boundary=True,
-                                                   algorithm=OD)
+            # try to apply the decision boundaries
+            try:
+                xcurr, ycurr, xbnd, ybnd = get_inliers(XYcurr[:, 0],
+                                                       XYcurr[:, 1], xprof,
+                                                       return_boundary=True,
+                                                       algorithm=OD)
+                # final coordinates
+                xf_ = xcurr
+                yf_ = ycurr
 
-            # final coordinates
-            xf = xcurr
-            yf = ycurr
+                # interpolate to same as xprof
+                f = interp1d(xf_, yf_, fill_value="extrapolate", kind="linear")
+                yf = f(xprof)
+                xf = xprof
+
+            except Exception:
+                raise
+                xf = xprof
+                yf = yprof
 
             # fix according to the profile
             idx = np.where(yf < yprof)[0]
@@ -345,6 +366,17 @@ def main():
             # plot profile
             ax.plot(xprof, yprof+height, lw=3, color="k", zorder=10)
 
+            # plot lidar location
+            ax.scatter(0, height, 200, facecolor="0.25", edgecolor="navy",
+                       linewidths=3, zorder=100)
+
+            # plot LIDAR beams
+            for x, y in zip(xf, yf):
+                ax.plot((0, x), (height, y+height), lw=1, color="k",
+                        alpha=0.25)
+
+            # print(np.diff(xf).mean())
+
             # fill water
             ax.fill_between(xfill, yfill+height, yf+height,
                             color="dodgerblue", alpha=0.5)
@@ -375,9 +407,13 @@ def main():
             lg.get_frame().set_color("w")
 
             ax.grid(ls="-", color="w", lw=2)
+
+            for _, spine in ax.spines.items():
+                spine.set_zorder(100)
+
             #
             ax.set_xlim(xprof.min(), xprof.max())
-            ax.set_ylim(YCUT[0], YCUT[1])
+            ax.set_ylim(yprof.min()+height, height)
 
             ax.set_xlabel("Distance from LiDAR [m]")
             ax.set_ylabel("Elevation [m]")
@@ -387,23 +423,23 @@ def main():
             sns.despine(ax=ax)
             fig.tight_layout()
             fname = time.strftime("%Y%m%d_%H%M%S.%f")
-            plt.savefig(opath+"/"+fname+".png", dpi=120,
+            plt.savefig(opath+"/"+fname+".jpg", dpi=80,
                         bbox_inches='tight', pad_inches=0.2)
-
+            # plt.show()
+            # sys.exit()
             plt.close()
             pbar.update()
-            # sys.exit()
 
             t += 1
 
     # animate
     cmdl1 = "ffmpeg -y -framerate 8 -pattern_type glob"
-    cmdl2 = " -i \'{}/*.png\'".format(opath)
+    cmdl2 = " -i \'{}/*.jpg\'".format(opath)
     cmdl3 = " -vf pad=\'width=ceil(iw/2)*2:height=ceil(ih/2)*2\'"
     cmdl4 = " -c:v libx264 -pix_fmt yuv420p {}".format(args.output[0])
     p1 = subprocess.Popen(cmdl1+cmdl2+cmdl3+cmdl4, shell=True)
     p1.wait()
-    subprocess.call("rm -rf {}".format(opath), shell=True)
+    # subprocess.call("rm -rf {}".format(opath), shell=True)
 
     pbar.close()
 
