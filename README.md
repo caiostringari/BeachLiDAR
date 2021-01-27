@@ -1,11 +1,12 @@
-# BeachLiDAR
-Process Beach LiDAR data
+# Beach LiDAR
 
-This repository gathers some tools to process 2D SICK LiDAR data. Please visit https://www.sick.com/
+LiDAR with focus on surf and swash zone processes.
 
-In this repository, we focus only on processing beach data. You will get something that looks like this:
+This repository contains tools to process 2D SICK LiDAR data for surf and swash zone applications. Please visit https://www.sick.com/ for more information regarding their LiDARs. In this repository, we focus only on processing data and some examples. From raw LiDAR data, you will get something that looks like this:
 
 ![lidar](extra/lidar.gif)
+
+An example of the application of the present method has been recently published by Remote Sensing. Please refer to the [`remote sensing folder`](remote_sensing) for more details.
 
 # Install
 
@@ -17,7 +18,7 @@ Then, create an environment named LiDAR and install the following packages:
 
 ```bash
 # create a new environment
-conda create --name LiDAR python=3.7
+conda create --name LiDAR python=3
 # activate
 source activate LiDAR
 # ipython
@@ -134,6 +135,6 @@ If everything goes right, you can plot your timestack:
 ![stack](extra/timestack.png)
 
 
-# Disclaimer:
+# Disclaimer
 
-This software is available "as is". Please don't blame me if it does not work out-of-the-box for your particular application.
+There is no warranty for the program, to the extent permitted by applicable law except when otherwise stated in writing the copyright holders and/or other parties provide the program “as is” without warranty of any kind, either expressed or implied, including, but not limited to, the implied warranties of merchantability and fitness for a particular purpose. the entire risk as to the quality and performance of the program is with you. should the program prove defective, you assume the cost of all necessary servicing, repair or correction.
